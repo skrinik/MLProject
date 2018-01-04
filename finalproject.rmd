@@ -1,0 +1,182 @@
+---
+title: "Coursera Intro to Machine Learning"
+author: "Sean Krinik"
+date: "1/1/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Intro to Machine Learning 
+### Final Project
+### Sean Krinik
+
+### Introduction
+
+The Human Activity includes data from activity trackers like Jawbone and Fitbit. The data provided can be used to predict the type of activity a subject was involved in. 
+
+### Goal
+
+I wish to find a good model with the highest possible accuracy in order to predict the activity type of twenty subjects within a test data set. 
+### Method
+
+First, importing the necessary libraries and setting the seed gives us the program initialization.
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+library(caret);library(ggplot2);library(curl);library(randomForest);library(rpart);library(rattle)
+set.seed(3212)
+```
+
+Next, the data sets need to be imported into R, I included both a download method since the data set is fairly large (temporarily stores the data on your HD), and the download an read method. For ease of use I chose to leave the local file import uncommented.
+```{r, echo=TRUE, warning=FALSE, message=FALSE, cache=TRUE}
+#train
+#training <- tempfile()
+#download.file(url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", method="curl", destfile=training)
+#training <- read.csv(training)
+path <- "/Users/seankrinik/Documents/Coursera/Machine Learning (R)/courseproj/pml-training.csv"
+training <- read.csv(path)
+```
+
+Notice dimensions of the data provided. 
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+dim(training) #tons of data, use CV
+```
+
+Same process from above here, to import the test set. 
+```{r, echo=TRUE, warning=FALSE, message=FALSE, cache=TRUE}
+#test
+#testing <- tempfile()
+#download.file(url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", method="curl", destfile=testing)
+#testing <- read.csv(testing)
+path <- "/Users/seankrinik/Documents/Coursera/Machine Learning (R)/courseproj/pml-testing.csv"
+testing <- read.csv(path)
+```
+
+Notice dimensions of test set.
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+dim(testing)
+```
+
+
+**Cross validation** implementation. I split the training set into a train and test set to use for model decision. 
+```{r, echo=TRUE, warning=FALSE, message=FALSE, cache=TRUE}
+#Split training into train/test for cross validation
+inTrain <- createDataPartition(training$classe, p=.7,list=F)
+train_cv <- training[inTrain,];test_cv <- training[-inTrain,]
+```
+
+Dimensions of the train and test set from my cross validation.
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+c(dim(train_cv),dim(test_cv))
+```
+
+I want to get rid of unnecessary variables i.e. variables that have very little variance and therefore are most likely not quantitative predictors. Using near zero variance, I can eliminate some of these predictors making model selection easier. 
+```{r, echo=TRUE, warning=FALSE, message=FALSE, cache=TRUE}
+#Clean data using Near Zero Variance
+nzv <- nearZeroVar(train_cv,saveMetrics = T)
+table(nzv$nzv)
+train_cv <- train_cv[,nzv$nzv==FALSE]; train_cv <- train_cv[,-1]
+```
+
+Notice the new dimensions, many of the variables were dropped.
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+dim(train_cv)
+```
+
+This nested loop cleans the predictors even further, checking for variables with a majority of missing values (>50%). This will allow for a smoother model selection. 
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+tmp_training <- train_cv
+for(i in 1:length(train_cv)) {
+  if( sum( is.na(train_cv[,i]))/nrow(train_cv) > .5) {
+    for(j in 1:length(tmp_training)) {
+      if( length( grep(names(train_cv[i]), names(tmp_training)[j]))==1) {
+        tmp_training <- tmp_training[,-j]
+      }
+    }
+  }
+}
+train_cv <- tmp_training
+```
+
+Again, I was able to reduce the number of variables by eliminating predictors that may not offer much help to the model. 
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+dim(train_cv)
+```
+
+Here I apply the dimension changes to the cross validated test set and the final test set so all the data sets are similar.
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+#Apply changes to test set
+cnames1 <- colnames(train_cv)
+cnames2 <- colnames(train_cv[,-58])
+testing <- testing[,cnames2]
+test_cv <- test_cv[,cnames1]
+```
+
+Double check the dimensions of the test sets. Notice, "classe" is not needed in the final test set since our response variable will not need to be used in the prediction. 
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+c(dim(testing),dim(test_cv))
+```
+
+This nested loop coerces the data into the same data type so the model can match the train and test sets. 
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+#get testing and test_cv to be of same type.
+for (i in 1:length(testing) ) {
+  for(j in 1:length(test_cv)) {
+    if( length( grep(names(train_cv[i]), names(testing)[j]) ) == 1)  {
+      class(testing[j]) <- class(train_cv[i])
+    }      
+  }      
+}
+#check
+testing <- rbind(train_cv[2, -58] , testing)
+testing <- testing[-1,] #drop usernames predictor
+```
+
+### Model Selection:
+
+**Decision tree** model using rpart: 
+```{r, echo=TRUE, warning=FALSE, message=FALSE, cache=TRUE}
+#Decision Trees
+modfitrpart <- rpart(classe~., data=train_cv)
+fancyRpartPlot(modfitrpart)
+predRP <- predict(modfitrpart, test_cv,type = "class")
+cmRP <- confusionMatrix(predRP,test_cv$classe)
+```
+
+The accuracy is fairly low (<90%) so this model either needs to be tuned, or just is not the optimal model for this data.
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+cmRP$overall[1]
+```
+
+**Random forest model** without using any tuning gives us a really accuarate model when applying to the cross validation test set. 
+```{r, echo=TRUE, warning=FALSE, message=FALSE, cache=TRUE}
+#random forest
+modRF <- randomForest(classe~.,data=train_cv)
+predRF <- predict(modRF, test_cv) #fix
+cmRF <- confusionMatrix(test_cv$classe,predRF)
+```
+
+The accuracy is very high, and therefore I will use the random forest model on the test set.
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+cmRF$overall[1]
+```
+
+
+### Prediction
+
+Here I used the random forest model on the test data. The predictions are correct. Looking at the out-of-sample error, since the accuracy of my model was 99.898%, therefore 1-.9989 = .0011 or .11%. 
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+pred_Test <- predict(modRF,testing)
+pred_Test
+```
+
+
+
+
+
+
+
+
+
